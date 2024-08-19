@@ -25,6 +25,11 @@ abstract contract ERC667 is Context, Ownable2Step, IERC1155, IERC1155MetadataURI
     uint256 private constant PHASE_NFT = 0;
 
     // Mappings
+    struct Balance {
+        uint256 phase;
+        uint256 amount;
+    }
+    
     mapping(address => uint256[]) private _ownedTokens;
     mapping(uint256 => address) private _phase0Owners;
     mapping(uint256 => mapping(uint256 => uint256)) private _totalSupplies;
@@ -33,9 +38,10 @@ abstract contract ERC667 is Context, Ownable2Step, IERC1155, IERC1155MetadataURI
     mapping(uint256 => uint256[]) public tokenPhaseMultipliers;
 
     // Events
-    event ERC667Transfer(address indexed from, address indexed to, uint256 tokenId, uint256 phase, uint256 amount);
-    event TokenPhaseUpdated(uint256 tokenId, uint256 oldPhase, uint256 newPhase);
+    event ERC667Transfer(address indexed from, address indexed to, uint256 indexed tokenId, uint256 phase, uint256 amount);
+    event TokenPhaseUpdated(uint256 indexed tokenId, uint256 oldPhase, uint256 newPhase);
     event MetadataUpdated(uint256 indexed tokenId, string newUri);
+    event Received(address indexed sender, uint256 amount);
 
     // Errors
     error NotFound();
@@ -60,19 +66,17 @@ abstract contract ERC667 is Context, Ownable2Step, IERC1155, IERC1155MetadataURI
     // IERC1155 Interface Implementation
 
     function balanceOf(address account, uint256 id) public view override returns (uint256) {
-        require(account != address(0), "ERC667: balance query for the zero address");
+        require(account != address(0), "ERC667: zero address");
         return _balances[id][PHASE_NFT][account];
     }
 
     function balanceOfBatch(address[] memory accounts, uint256[] memory ids) public view override returns (uint256[] memory) {
-        require(accounts.length == ids.length, "ERC667: accounts and ids length mismatch");
+        require(accounts.length == ids.length, "ERC667: accounts and ids mismatch");
 
         uint256[] memory batchBalances = new uint256[](accounts.length);
-
         for (uint256 i = 0; i < accounts.length; i++) {
             batchBalances[i] = balanceOf(accounts[i], ids[i]);
         }
-
         return batchBalances;
     }
 
@@ -86,7 +90,7 @@ abstract contract ERC667 is Context, Ownable2Step, IERC1155, IERC1155MetadataURI
     }
 
     function safeTransferFrom(address from, address to, uint256 id, uint256 amount, bytes memory data) public override {
-        require(to != address(0), "ERC667: transfer to the zero address");
+        require(to != address(0), "ERC667: zero address");
 
         address operator = _msgSender();
         uint256[] memory ids = _asSingletonArray(id);
@@ -95,7 +99,7 @@ abstract contract ERC667 is Context, Ownable2Step, IERC1155, IERC1155MetadataURI
         _beforeTokenTransfer(operator, from, to, ids, amounts, data);
 
         uint256 fromBalance = _balances[id][PHASE_NFT][from];
-        require(fromBalance >= amount, "ERC667: insufficient balance for transfer");
+        require(fromBalance >= amount, "ERC667: insufficient balance");
         _balances[id][PHASE_NFT][from] = fromBalance - amount;
         _balances[id][PHASE_NFT][to] += amount;
 
@@ -105,11 +109,10 @@ abstract contract ERC667 is Context, Ownable2Step, IERC1155, IERC1155MetadataURI
     }
 
     function safeBatchTransferFrom(address from, address to, uint256[] memory ids, uint256[] memory amounts, bytes memory data) public override {
-        require(ids.length == amounts.length, "ERC667: ids and amounts length mismatch");
-        require(to != address(0), "ERC667: transfer to the zero address");
+        require(ids.length == amounts.length, "ERC667: ids and amounts mismatch");
+        require(to != address(0), "ERC667: zero address");
 
         address operator = _msgSender();
-
         _beforeTokenTransfer(operator, from, to, ids, amounts, data);
 
         for (uint256 i = 0; i < ids.length; i++) {
@@ -117,13 +120,12 @@ abstract contract ERC667 is Context, Ownable2Step, IERC1155, IERC1155MetadataURI
             uint256 amount = amounts[i];
 
             uint256 fromBalance = _balances[id][PHASE_NFT][from];
-            require(fromBalance >= amount, "ERC667: insufficient balance for transfer");
+            require(fromBalance >= amount, "ERC667: insufficient balance");
             _balances[id][PHASE_NFT][from] = fromBalance - amount;
             _balances[id][PHASE_NFT][to] += amount;
         }
 
         emit TransferBatch(operator, from, to, ids, amounts);
-
         _doSafeBatchTransferAcceptanceCheck(operator, from, to, ids, amounts, data);
     }
 
@@ -144,7 +146,7 @@ abstract contract ERC667 is Context, Ownable2Step, IERC1155, IERC1155MetadataURI
         if (_isContract(to)) {
             try IERC1155Receiver(to).onERC1155Received(operator, from, id, amount, data) returns (bytes4 response) {
                 if (response != IERC1155Receiver.onERC1155Received.selector) {
-                    revert("ERC667: ERC1155Receiver rejected tokens");
+                    revert UnsafeRecipient();
                 }
             } catch {
                 revert UnsafeRecipient();
@@ -163,7 +165,7 @@ abstract contract ERC667 is Context, Ownable2Step, IERC1155, IERC1155MetadataURI
         if (_isContract(to)) {
             try IERC1155Receiver(to).onERC1155BatchReceived(operator, from, ids, amounts, data) returns (bytes4 response) {
                 if (response != IERC1155Receiver.onERC1155BatchReceived.selector) {
-                    revert("ERC667: ERC1155Receiver rejected tokens");
+                    revert UnsafeRecipient();
                 }
             } catch {
                 revert UnsafeRecipient();
@@ -198,7 +200,7 @@ abstract contract ERC667 is Context, Ownable2Step, IERC1155, IERC1155MetadataURI
 
     // Minting function for creating new tokens
     function _mint(address to, uint256 tokenId, uint256 phase, uint256 amount) internal virtual {
-        require(to != address(0), "ERC667: mint to the zero address");
+        require(to != address(0), "ERC667: zero address");
 
         if (phase == PHASE_NFT) {
             require(_phase0Owners[tokenId] == address(0), "ERC667: token already minted");
@@ -215,7 +217,7 @@ abstract contract ERC667 is Context, Ownable2Step, IERC1155, IERC1155MetadataURI
 
     // Burning function to destroy tokens
     function _burn(address from, uint256 tokenId, uint256 phase, uint256 amount) internal virtual {
-        require(from != address(0), "ERC667: burn from the zero address");
+        require(from != address(0), "ERC667: zero address");
 
         uint256 balance = _balances[tokenId][phase][from];
         require(balance >= amount, "ERC667: burn amount exceeds balance");
@@ -232,9 +234,9 @@ abstract contract ERC667 is Context, Ownable2Step, IERC1155, IERC1155MetadataURI
 
     // Function to update the phase of a token
     function _updateTokenPhase(uint256 tokenId, uint256 newPhase) internal virtual {
-        require(newPhase != PHASE_NFT, "ERC667: new phase cannot be NFT phase");
+        require(newPhase != PHASE_NFT, "ERC667: cannot update to NFT phase");
         uint256 oldPhase = _getTokenPhase(tokenId);
-        require(oldPhase != newPhase, "ERC667: token is already in the requested phase");
+        require(oldPhase != newPhase, "ERC667: already in requested phase");
 
         _balances[tokenId][newPhase][_phase0Owners[tokenId]] = _balances[tokenId][oldPhase][_phase0Owners[tokenId]];
         delete _balances[tokenId][oldPhase][_phase0Owners[tokenId]];
@@ -254,14 +256,14 @@ abstract contract ERC667 is Context, Ownable2Step, IERC1155, IERC1155MetadataURI
 
     // Function to update the metadata URI for a token
     function _updateTokenUri(uint256 tokenId, string memory newUri) internal virtual {
-        require(bytes(newUri).length > 0, "ERC667: new URI must be non-empty");
+        require(bytes(newUri).length > 0, "ERC667: new URI is empty");
         emit MetadataUpdated(tokenId, newUri);
     }
 
     // Function to transfer ownership of a token
     function transferTokenOwnership(address from, address to, uint256 tokenId) public virtual {
-        require(to != address(0), "ERC667: transfer to the zero address");
-        require(from == _phase0Owners[tokenId], "ERC667: only the token owner can transfer ownership");
+        require(to != address(0), "ERC667: zero address");
+        require(from == _phase0Owners[tokenId], "ERC667: not token owner");
 
         _phase0Owners[tokenId] = to;
         _balances[tokenId][PHASE_NFT][from] -= 1;
@@ -288,14 +290,12 @@ abstract contract ERC667 is Context, Ownable2Step, IERC1155, IERC1155MetadataURI
     // Function to withdraw any Ether sent to the contract
     function withdrawEther(address payable recipient) external onlyOwner {
         require(address(this).balance > 0, "ERC667: no Ether to withdraw");
-        recipient.transfer(address(this).balance);
+        (bool success, ) = recipient.call{value: address(this).balance}("");
+        require(success, "ERC667: withdraw failed");
     }
 
     // Function to retrieve the contract's Ether balance
     function getContractBalance() public view returns (uint256) {
         return address(this).balance;
     }
-
-    // Event to track received Ether
-    event Received(address indexed sender, uint256 amount);
 }
