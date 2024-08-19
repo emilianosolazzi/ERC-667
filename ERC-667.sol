@@ -29,8 +29,7 @@ abstract contract ERC667 is Context, Ownable2Step, IERC1155, IERC1155MetadataURI
         uint256 phase;
         uint256 amount;
     }
-    
-    mapping(address => uint256[]) private _ownedTokens;
+
     mapping(uint256 => address) private _phase0Owners;
     mapping(uint256 => mapping(uint256 => uint256)) private _totalSupplies;
     mapping(uint256 => mapping(uint256 => mapping(address => uint256))) private _balances;
