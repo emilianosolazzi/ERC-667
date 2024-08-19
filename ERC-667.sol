@@ -9,13 +9,14 @@ import {IERC1155MetadataURI} from "@openzeppelin/contracts/token/ERC1155/extensi
 import {Context} from "@openzeppelin/contracts/utils/Context.sol";
 import {SafeMath} from "@openzeppelin/contracts/utils/math/SafeMath.sol";
 import {Strings} from "@openzeppelin/contracts/utils/Strings.sol";
+import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 
 /// @title ERC667: A Mixed ERC20/721/1155 Token Standard for Supply Chain Management
 /// @notice ERC667 enables assets to transition between unique (ERC721) to fungible (ERC20/1155) states,
 ///         facilitating supply chain tracking, fractionalization, and lifecycle management.
 /// @dev Designed for supply chain processes, with support for multiple asset phases and custom metadata.
 /// @author Emiliano Solazzi, 2024
-abstract contract ERC667 is Context, Ownable, IERC1155, IERC1155MetadataURI {
+contract ERC667 is Context, Ownable, IERC1155, IERC1155MetadataURI {
     using SafeMath for uint256;
     using Strings for uint256;
 
@@ -137,8 +138,15 @@ abstract contract ERC667 is Context, Ownable, IERC1155, IERC1155MetadataURI {
         return string(abi.encodePacked("https://token-uri/", tokenId.toString()));
     }
 
-    // Private functions
+    // Implementation of supportsInterface from IERC165
+    function supportsInterface(bytes4 interfaceId) public view virtual override returns (bool) {
+        return 
+            interfaceId == type(IERC1155).interfaceId ||
+            interfaceId == type(IERC1155MetadataURI).interfaceId ||
+            interfaceId == type(IERC165).interfaceId;
+    }
 
+    // Private functions
     function _doSafeTransferAcceptanceCheck(
         address operator,
         address from,
