@@ -42,6 +42,7 @@ abstract contract ERC667 is Context, Ownable2Step, IERC1155, IERC1155MetadataURI
     event TokenPhaseUpdated(uint256 indexed tokenId, uint256 oldPhase, uint256 newPhase);
     event MetadataUpdated(uint256 indexed tokenId, string newUri);
     event Received(address indexed sender, uint256 amount);
+    event Withdrawn(address indexed recipient, uint256 amount);
 
     // Errors
     error NotFound();
@@ -289,9 +290,11 @@ abstract contract ERC667 is Context, Ownable2Step, IERC1155, IERC1155MetadataURI
 
     // Function to withdraw any Ether sent to the contract
     function withdrawEther(address payable recipient) external onlyOwner {
-        require(address(this).balance > 0, "ERC667: no Ether to withdraw");
-        (bool success, ) = recipient.call{value: address(this).balance}("");
+        uint256 balance = address(this).balance;
+        require(balance > 0, "ERC667: no Ether to withdraw");
+        (bool success, ) = recipient.call{value: balance}("");
         require(success, "ERC667: withdraw failed");
+        emit Withdrawn(recipient, balance);
     }
 
     // Function to retrieve the contract's Ether balance
