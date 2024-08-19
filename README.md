@@ -17,4 +17,6 @@ This allows for comprehensive tracking, fractionalization, and lifecycle managem
 - **Role-Based Access:** Uses OpenZeppelin’s `Ownable` contract to manage administrative roles and permissions.
 - **Batch Operations:** Supports batch minting, burning, and transferring of tokens.
 
+Contributing
 
+Contributions are welcome. Please submit issues and pull requests for any enhancements, bug fixes, or new features. Make sure to follow the contribution guidelines.
