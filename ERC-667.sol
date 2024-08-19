@@ -25,7 +25,7 @@ abstract contract ERC667 is Context, Ownable2Step, IERC1155, IERC1155MetadataURI
     uint256 private constant PHASE_NFT = 0;
 
     // Mappings
-    struct Balance {
+    struct TokenData {
         uint256 phase;
         uint256 amount;
     }
@@ -289,7 +289,7 @@ abstract contract ERC667 is Context, Ownable2Step, IERC1155, IERC1155MetadataURI
     }
 
     // Function to withdraw any Ether sent to the contract
-    function withdrawEther(address payable recipient) external onlyOwner {
+    function withdrawEther(address payable recipient) external onlyOwner payable {
         uint256 balance = address(this).balance;
         require(balance > 0, "ERC667: no Ether to withdraw");
         (bool success, ) = recipient.call{value: balance}("");
