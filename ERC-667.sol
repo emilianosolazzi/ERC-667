@@ -1,23 +1,18 @@
 // SPDX-License-Identifier: Apache-2.0
 pragma solidity 0.8.23;
 
-import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
+import {Ownable2Step} from "@openzeppelin/contracts/access/Ownable2Step.sol";
 import {IERC721Receiver} from "@openzeppelin/contracts/token/ERC721/IERC721Receiver.sol";
 import {IERC1155} from "@openzeppelin/contracts/token/ERC1155/IERC1155.sol";
 import {IERC1155Receiver} from "@openzeppelin/contracts/token/ERC1155/IERC1155Receiver.sol";
 import {IERC1155MetadataURI} from "@openzeppelin/contracts/token/ERC1155/extensions/IERC1155MetadataURI.sol";
 import {Context} from "@openzeppelin/contracts/utils/Context.sol";
-import {SafeMath} from "@openzeppelin/contracts/utils/math/SafeMath.sol";
 import {Strings} from "@openzeppelin/contracts/utils/Strings.sol";
-import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 
 /// @title ERC667: A Mixed ERC20/721/1155 Token Standard for Supply Chain Management
 /// @notice ERC667 enables assets to transition between unique (ERC721) to fungible (ERC20/1155) states,
 ///         facilitating supply chain tracking, fractionalization, and lifecycle management.
-/// @dev Designed for supply chain processes, with support for multiple asset phases and custom metadata.
-/// @author Emiliano Solazzi, 2024
-contract ERC667 is Context, Ownable, IERC1155, IERC1155MetadataURI {
-    using SafeMath for uint256;
+abstract contract ERC667 is Context, Ownable2Step, IERC1155, IERC1155MetadataURI {
     using Strings for uint256;
 
     // Metadata
@@ -32,18 +27,15 @@ contract ERC667 is Context, Ownable, IERC1155, IERC1155MetadataURI {
     // Mappings
     mapping(address => uint256[]) private _ownedTokens;
     mapping(uint256 => address) private _phase0Owners;
-    mapping(address => mapping(uint256 => uint256[])) private _phasesOwned;
     mapping(uint256 => mapping(uint256 => uint256)) private _totalSupplies;
     mapping(uint256 => mapping(uint256 => mapping(address => uint256))) private _balances;
-    mapping(uint256 => mapping(uint256 => mapping(address => mapping(address => uint256)))) public phaseAllowances;
-    mapping(address => mapping(uint256 => address)) private _tokenApprovals;
     mapping(address => mapping(address => bool)) private _operatorApprovals;
     mapping(uint256 => uint256[]) public tokenPhaseMultipliers;
 
     // Events
     event ERC667Transfer(address indexed from, address indexed to, uint256 tokenId, uint256 phase, uint256 amount);
     event TokenPhaseUpdated(uint256 tokenId, uint256 oldPhase, uint256 newPhase);
-    event MetadataUpdated(uint256 tokenId, string newUri);
+    event MetadataUpdated(uint256 indexed tokenId, string newUri);
 
     // Errors
     error NotFound();
@@ -58,10 +50,11 @@ contract ERC667 is Context, Ownable, IERC1155, IERC1155MetadataURI {
     error InsufficientBalance(uint256 available, uint256 required);
 
     // Constructor
-    constructor(string memory _name, string memory _symbol, address _owner) Ownable(_owner) {
+    constructor(string memory _name, string memory _symbol) {
         name = _name;
         symbol = _symbol;
         decimals = 18; // Standard decimals for ERC20
+        transferOwnership(_msgSender());
     }
 
     // IERC1155 Interface Implementation
@@ -138,15 +131,8 @@ contract ERC667 is Context, Ownable, IERC1155, IERC1155MetadataURI {
         return string(abi.encodePacked("https://token-uri/", tokenId.toString()));
     }
 
-    // Implementation of supportsInterface from IERC165
-    function supportsInterface(bytes4 interfaceId) public view virtual override returns (bool) {
-        return 
-            interfaceId == type(IERC1155).interfaceId ||
-            interfaceId == type(IERC1155MetadataURI).interfaceId ||
-            interfaceId == type(IERC165).interfaceId;
-    }
-
     // Private functions
+
     function _doSafeTransferAcceptanceCheck(
         address operator,
         address from,
@@ -160,10 +146,8 @@ contract ERC667 is Context, Ownable, IERC1155, IERC1155MetadataURI {
                 if (response != IERC1155Receiver.onERC1155Received.selector) {
                     revert("ERC667: ERC1155Receiver rejected tokens");
                 }
-            } catch Error(string memory reason) {
-                revert(reason);
             } catch {
-                revert("ERC667: transfer to non ERC1155Receiver implementer");
+                revert UnsafeRecipient();
             }
         }
     }
@@ -181,10 +165,8 @@ contract ERC667 is Context, Ownable, IERC1155, IERC1155MetadataURI {
                 if (response != IERC1155Receiver.onERC1155BatchReceived.selector) {
                     revert("ERC667: ERC1155Receiver rejected tokens");
                 }
-            } catch Error(string memory reason) {
-                revert(reason);
             } catch {
-                revert("ERC667: transfer to non ERC1155Receiver implementer");
+                revert UnsafeRecipient();
             }
         }
     }
@@ -248,49 +230,6 @@ contract ERC667 is Context, Ownable, IERC1155, IERC1155MetadataURI {
         emit TransferSingle(_msgSender(), from, address(0), tokenId, amount);
     }
 
-    // Batch minting function for creating multiple tokens
-    function _mintBatch(address to, uint256[] memory tokenIds, uint256[] memory phases, uint256[] memory amounts) internal virtual {
-        require(to != address(0), "ERC667: mint to the zero address");
-        require(tokenIds.length == phases.length && phases.length == amounts.length, "ERC667: arrays length mismatch");
-
-        for (uint256 i = 0; i < tokenIds.length; i++) {
-            _balances[tokenIds[i]][phases[i]][to] += amounts[i];
-            _totalSupplies[tokenIds[i]][phases[i]] += amounts[i];
-            if (phases[i] == PHASE_NFT) {
-                require(_phase0Owners[tokenIds[i]] == address(0), "ERC667: token already minted");
-                _phase0Owners[tokenIds[i]] = to;
-            }
-        }
-
-        emit TransferBatch(_msgSender(), address(0), to, tokenIds, amounts);
-
-        _doSafeBatchTransferAcceptanceCheck(_msgSender(), address(0), to, tokenIds, amounts, "");
-    }
-
-    // Batch burning function to destroy multiple tokens
-    function _burnBatch(address from, uint256[] memory tokenIds, uint256[] memory phases, uint256[] memory amounts) internal virtual {
-        require(from != address(0), "ERC667: burn from the zero address");
-        require(tokenIds.length == phases.length && phases.length == amounts.length, "ERC667: arrays length mismatch");
-
-        for (uint256 i = 0; i < tokenIds.length; i++) {
-            uint256 id = tokenIds[i];
-            uint256 phase = phases[i];
-            uint256 amount = amounts[i];
-
-            uint256 balance = _balances[id][phase][from];
-            require(balance >= amount, "ERC667: burn amount exceeds balance");
-
-            _balances[id][phase][from] = balance - amount;
-            _totalSupplies[id][phase] -= amount;
-
-            if (phase == PHASE_NFT && _balances[id][PHASE_NFT][from] == 0) {
-                _phase0Owners[id] = address(0);
-            }
-        }
-
-        emit TransferBatch(_msgSender(), from, address(0), tokenIds, amounts);
-    }
-
     // Function to update the phase of a token
     function _updateTokenPhase(uint256 tokenId, uint256 newPhase) internal virtual {
         require(newPhase != PHASE_NFT, "ERC667: new phase cannot be NFT phase");
@@ -333,15 +272,13 @@ contract ERC667 is Context, Ownable, IERC1155, IERC1155MetadataURI {
 
     // Internal utility to check if an address is a contract
     function _isContract(address account) internal view returns (bool) {
-        uint256 size;
-        assembly {
-            size := extcodesize(account)
-        }
-        return size > 0;
+        return account.code.length > 0;
     }
 
     // Receive function to accept Ether
-    receive() external payable {}
+    receive() external payable {
+        emit Received(msg.sender, msg.value);
+    }
 
     // Fallback function to prevent accidental Ether transfers
     fallback() external payable {
@@ -358,4 +295,7 @@ contract ERC667 is Context, Ownable, IERC1155, IERC1155MetadataURI {
     function getContractBalance() public view returns (uint256) {
         return address(this).balance;
     }
+
+    // Event to track received Ether
+    event Received(address indexed sender, uint256 amount);
 }
